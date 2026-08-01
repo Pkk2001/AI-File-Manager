@@ -48,6 +48,20 @@ namespace FileManager.Core
                 count++;
                 if (count >= 5) break;
             }
+
+            Console.WriteLine("Checking for duplicate files...");
+            var dupFinder = new DuplicateFinder();
+            var duplicates = dupFinder.FindDuplicates(scannedFiles);
+
+            Console.WriteLine($"\n[RESULT] Duplicate Groups Found: {duplicates.Count}");
+            foreach (var group in duplicates)
+            {
+                Console.WriteLine($"\n--- Duplicate Hash Group: {group.Key} ---");
+                foreach (var file in group.Value)
+                {
+                    Console.WriteLine($" -> {file.FileName} ({file.FilePath})");
+                }
+            }
         }
     }
 }
