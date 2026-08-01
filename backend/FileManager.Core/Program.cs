@@ -1,9 +1,10 @@
 ﻿using System;
+using FileManager.Core.Models;
 using FileManager.Core.Services;
 
 namespace FileManager.Core
 {
-    class Program
+    internal class Program
     {
         static void Main(string[] args)
         {
@@ -13,8 +14,13 @@ namespace FileManager.Core
 
             var scanner = new FileScanner();
             
-            // Testing with a sample path (You can change this path to any test folder on your PC)
+            // Testing path
             string testPath = @"C:\Users\prabh\Downloads"; 
+
+            if (!System.IO.Directory.Exists(testPath))
+            {
+                testPath = AppDomain.CurrentDomain.BaseDirectory;
+            }
 
             Console.WriteLine($"Scanning folder: {testPath} ...");
             var startTime = DateTime.Now;
@@ -28,7 +34,12 @@ namespace FileManager.Core
             Console.WriteLine($"Total Files Found: {scannedFiles.Count}");
             Console.WriteLine($"Time Taken: {duration:F2} seconds\n");
 
-            // Print top 5 scanned files as a preview
+            // SQLite Database 
+            Console.WriteLine("Saving metadata to SQLite Index Database...");
+            var dbHelper = new DatabaseHelper();
+            dbHelper.SaveFilesBulk(scannedFiles);
+            Console.WriteLine("[SUCCESS] Files indexed into SQLite successfully!\n");
+
             Console.WriteLine("--- Preview First 5 Files ---");
             int count = 0;
             foreach (var file in scannedFiles)

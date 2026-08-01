@@ -41,3 +41,4 @@ F:\AI-File-Manager\backend\FileManager.Core\obj\Debug\net9.0\refint\FileManager.
 F:\AI-File-Manager\backend\FileManager.Core\obj\Debug\net9.0\FileManager.Core.pdb
 F:\AI-File-Manager\backend\FileManager.Core\obj\Debug\net9.0\FileManager.Core.genruntimeconfig.cache
 F:\AI-File-Manager\backend\FileManager.Core\obj\Debug\net9.0\ref\FileManager.Core.dll
+F:\AI-File-Manager\backend\FileManager.Core\obj\Debug\net9.0\FileManager.Core.sourcelink.json
