@@ -1,33 +1,49 @@
 import sqlite3
 import os
 import json
-import ollama # pyrefly: ignore [missing-import]
+import re
+import ollama  # pyrefly: ignore [missing-import]
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "backend", "FileManager.Core", "files.db")
+# Dynamic SQLite database file path resolution
+def get_db_path():
+    base_core_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend", "FileManager.Core"))
+    candidate_paths = [
+        os.path.join(base_core_dir, "files.db"),
+        os.path.join(base_core_dir, "files_index.db"),
+        os.path.join(base_core_dir, "bin", "Debug", "net9.0", "files.db"),
+        os.path.join(base_core_dir, "bin", "Debug", "net9.0", "files_index.db"),
+    ]
+    for path in candidate_paths:
+        if os.path.exists(path):
+            return path
+    return candidate_paths[0]
 
 SYSTEM_PROMPT = """
-You are an AI File Manager Search Agent. Your job is to convert natural language queries into a SQL WHERE clause for SQLite.
-The database table is named `IndexedFiles` with columns:
+You are an AI File Manager Search Agent. Convert natural language queries into a SQLite WHERE clause.
+Database Table Columns:
 - FileName (TEXT)
 - FilePath (TEXT)
-- Extension (TEXT, e.g., '.mp4', '.pdf', '.zip')
+- Extension (TEXT, e.g., '.zip', '.rar', '.pdf', '.mp4')
 - FileSizeBytes (INTEGER)
-- CreatedDate (TEXT, ISO format)
-- ModifiedDate (TEXT, ISO format)
-- Category (TEXT, e.g., 'Videos', 'Documents', 'Archives', 'Images')
+- Category (TEXT)
 
-Respond ONLY with a valid JSON object with a single key "where_clause". Do NOT include markdown code blocks, explanations, or any extra text.
+CRITICAL RULES:
+1. Return ONLY the raw SQL WHERE condition text.
+2. DO NOT use JSON, DO NOT use markdown, DO NOT use escape quotes or backslashes.
+3. Extension values MUST include the dot (e.g. '.zip', '.rar').
+4. Always spell Extension correctly.
 
-Examples:
-Query: "find large zip files downloaded recently"
-JSON: {"where_clause": "Category = 'Archives' AND FileSizeBytes > 104857600 ORDER BY ModifiedDate DESC"}
-
-Query: "show me videos"
-JSON: {"where_clause": "Category = 'Videos'"}
+Example Output:
+(Extension = '.zip' OR Extension = '.rar') AND FileSizeBytes > 10485760
 """
 
 def query_files_with_ai(user_prompt, model_name="phi3"):
+    db_path = get_db_path()
     try:
+        if not os.path.exists(db_path):
+            print(f"Error: Database file not found at {os.path.abspath(db_path)}")
+            return []
+
         response = ollama.chat(
             model=model_name,
             messages=[
@@ -36,22 +52,29 @@ def query_files_with_ai(user_prompt, model_name="phi3"):
             ]
         )
 
-        content = response['message']['content'].strip()
-        print(f"AI LLM Response: {content}")
+        where_clause = response['message']['content'].strip()
+        print(f"\nAI LLM Raw Response:\n{where_clause}\n")
 
-        # Parse JSON
-        if content.startswith("```json"):
-            content = content.replace("```json", "").replace("```", "").strip()
+        # Clean markdown codeblocks or 'WHERE' prefix if present
+        where_clause = re.sub(r'```sql|```', '', where_clause, flags=re.IGNORECASE).strip()
+        where_clause = re.sub(r'^\s*WHERE\s+', '', where_clause, flags=re.IGNORECASE).strip()
 
-        data = json.loads(content)
-        where_clause = data.get("where_clause", "")
-
-        # Execute Query on SQLite
-        conn = sqlite3.connect(DB_PATH)
+        # Connect to SQLite Database
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        sql = f"SELECT FileName, FilePath, FileSizeBytes, Category FROM IndexedFiles WHERE {where_clause} LIMIT 10;"
-        print(f"Executing SQL: {sql}")
+        # Determine table name and columns dynamically
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = [r[0] for r in cursor.fetchall()]
+        table_name = "IndexedFiles" if "IndexedFiles" in tables else ("Files" if "Files" in tables else tables[0])
+
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        cols = [r[1] for r in cursor.fetchall()]
+        path_col = "FilePath" if "FilePath" in cols else ("FullPath" if "FullPath" in cols else "FilePath")
+        cat_col = "Category" if "Category" in cols else "Extension"
+
+        sql = f"SELECT FileName, {path_col}, FileSizeBytes, {cat_col} FROM {table_name} WHERE {where_clause} LIMIT 10;"
+        print(f"Executing SQL: {sql}\n")
         
         cursor.execute(sql)
         results = cursor.fetchall()
@@ -65,9 +88,9 @@ def query_files_with_ai(user_prompt, model_name="phi3"):
 
 if __name__ == "__main__":
     prompt = "find large zip or rar files"
-    print(f"\nUser Query: '{prompt}'")
+    print(f"User Query: '{prompt}'")
     results = query_files_with_ai(prompt)
     
-    print(f"\n--- Search Results ({len(results)}) ---")
+    print(f"--- Search Results ({len(results)}) ---")
     for row in results:
-        print(f"File: {row[0]} | Path: {row[1]} | Category: {row[3]}")
+        print(f"File: {row[0]} | Path: {row[1]} | Size: {round(row[2]/1024/1024, 2)} MB | Category/Ext: {row[3]}")
