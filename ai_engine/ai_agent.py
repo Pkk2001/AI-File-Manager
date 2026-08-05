@@ -87,10 +87,17 @@ def query_files_with_ai(user_prompt, model_name="phi3"):
         return []
 
 if __name__ == "__main__":
-    prompt = "find large zip or rar files"
+    import sys
+    
+    # Terminal prompt 
+    if len(sys.argv) > 1:
+        prompt = " ".join(sys.argv[1:])
+    else:
+        prompt = "find large zip or rar files"
+
     print(f"User Query: '{prompt}'")
     results = query_files_with_ai(prompt)
     
-    print(f"--- Search Results ({len(results)}) ---")
+    print(f"\n--- Search Results ({len(results)}) ---")
     for row in results:
         print(f"File: {row[0]} | Path: {row[1]} | Size: {round(row[2]/1024/1024, 2)} MB | Category/Ext: {row[3]}")
