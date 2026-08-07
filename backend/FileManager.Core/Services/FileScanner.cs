@@ -1,12 +1,22 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Security;
 using FileManager.Core.Models;
 
 namespace FileManager.Core.Services
 {
     public class FileScanner
     {
+        private static readonly HashSet<string> RestrictedFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "$Recycle.Bin",
+            "System Volume Information",
+            "Config.Msi",
+            "Windows",
+            "ProgramData"
+        };
+
         public List<FileItem> ScanDirectory(string path)
         {
             var fileItems = new List<FileItem>();
@@ -16,15 +26,7 @@ namespace FileManager.Core.Services
                 return fileItems;
             }
 
-            try
-            {
-                SafeScan(path, fileItems);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error scanning directory: {ex.Message}");
-            }
-
+            SafeScan(path, fileItems);
             return fileItems;
         }
 
@@ -32,13 +34,40 @@ namespace FileManager.Core.Services
         {
             try
             {
-                // Process files in the current directory
+                var currentDirInfo = new DirectoryInfo(currentPath);
+
+                // Skip symbolic links, junction points, and restricted system folders
+                if ((currentDirInfo.Attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint)
+                {
+                    return;
+                }
+
+                if (RestrictedFolders.Contains(currentDirInfo.Name))
+                {
+                    return;
+                }
+            }
+            catch (Exception)
+            {
+                return;
+            }
+
+            // Process files in current directory
+            try
+            {
                 string[] files = Directory.GetFiles(currentPath);
                 foreach (var filePath in files)
                 {
                     try
                     {
                         var fileInfo = new FileInfo(filePath);
+
+                        // Skip reparse point files
+                        if ((fileInfo.Attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint)
+                        {
+                            continue;
+                        }
+
                         fileItems.Add(new FileItem
                         {
                             FileName = fileInfo.Name,
@@ -49,13 +78,24 @@ namespace FileManager.Core.Services
                             LastModifiedTime = fileInfo.LastWriteTime
                         });
                     }
-                    catch
-                    {
-                        // Ignore files that are locked or inaccessible
-                    }
+                    catch (UnauthorizedAccessException) { }
+                    catch (PathTooLongException) { }
+                    catch (FileNotFoundException) { }
+                    catch (IOException) { }
+                    catch (SecurityException) { }
+                    catch (Exception) { }
                 }
+            }
+            catch (UnauthorizedAccessException) { }
+            catch (PathTooLongException) { }
+            catch (DirectoryNotFoundException) { }
+            catch (IOException) { }
+            catch (SecurityException) { }
+            catch (Exception) { }
 
-                // Recursively process subdirectories
+            // Process subdirectories recursively
+            try
+            {
                 string[] directories = Directory.GetDirectories(currentPath);
                 foreach (var dirPath in directories)
                 {
@@ -63,16 +103,20 @@ namespace FileManager.Core.Services
                     {
                         SafeScan(dirPath, fileItems);
                     }
-                    catch
-                    {
-                        // Ignore directories that cannot be accessed
-                    }
+                    catch (UnauthorizedAccessException) { }
+                    catch (PathTooLongException) { }
+                    catch (DirectoryNotFoundException) { }
+                    catch (IOException) { }
+                    catch (SecurityException) { }
+                    catch (Exception) { }
                 }
             }
-            catch
-            {
-                // Ignore directory-level errors (e.g. access denied on subfolders)
-            }
+            catch (UnauthorizedAccessException) { }
+            catch (PathTooLongException) { }
+            catch (DirectoryNotFoundException) { }
+            catch (IOException) { }
+            catch (SecurityException) { }
+            catch (Exception) { }
         }
     }
 }

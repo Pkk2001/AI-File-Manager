@@ -21,6 +21,12 @@ namespace FileManager.Core.Services
             {
                 connection.Open();
                 
+                var pragmaQuery = "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;";
+                using (var pragmaCommand = new SqliteCommand(pragmaQuery, connection))
+                {
+                    pragmaCommand.ExecuteNonQuery();
+                }
+
                 var createTableQuery = @"
                     CREATE TABLE IF NOT EXISTS Files (
                         FullPath TEXT PRIMARY KEY,
@@ -29,7 +35,8 @@ namespace FileManager.Core.Services
                         Extension TEXT NOT NULL,
                         CreationTime TEXT NOT NULL,
                         LastModifiedTime TEXT NOT NULL
-                    );";
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_files_size ON Files(FileSizeBytes);";
 
                 using (var command = new SqliteCommand(createTableQuery, connection))
                 {
