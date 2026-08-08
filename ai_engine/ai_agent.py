@@ -29,25 +29,32 @@ Available Columns ONLY:
 - Extension (TEXT, e.g., '.mkv', '.mp4', '.pdf', '.zip', '.rar', '.jpg', '.png')
 - FileSizeBytes (INTEGER)
 
-CRITICAL RULES:
+CRITICAL RULES FOR SQL GENERATION:
 1. ONLY use the available columns: FileName, FullPath, Extension, FileSizeBytes.
 2. DO NOT use 'Category' or any non-existent columns.
-3. Extension values MUST start with a dot (e.g., '.mkv', '.mp4', '.pdf', '.jpg', '.png').
-4. When filtering extensions alongside keyword searches, ALWAYS wrap multiple extension ORs in parentheses, e.g.: (Extension = '.jpg' OR Extension = '.png' OR Extension = '.jpeg' OR Extension = '.webp').
-5. Return ONLY the single raw SQL WHERE condition text. NO extra comments, NO follow-thru text, NO markdown, NO semicolons, NO 'Query:' / 'Output:' tags.
+3. Extension values MUST start with a dot (e.g., '.mkv', '.mp4', '.pdf', '.zip', '.rar', '.jpg', '.png').
+4. WILDCARDS: Always wrap keywords with '%' on BOTH sides (e.g., `FileName LIKE '%minecraft%'` or `FullPath LIKE '%minecraft%'`). NEVER use single-sided wildcards like `'minecraft%'`.
+5. KEYWORD MATCHING: Match keywords against BOTH `FileName` and `FullPath` using `(FileName LIKE '%term%' OR FullPath LIKE '%term%')` because folder names in `FullPath` often contain key context.
+6. NO DUMMY PATHS: DO NOT generate imaginary or dummy file paths (such as `/path/to/...`, `/home/...`, or `C:\\...`) in `FullPath`. Only search for path keywords if specified by the user.
+7. NO ASSUMED FILE SIZES: DO NOT filter by `FileSizeBytes` unless the user explicitly specifies size constraints (e.g., "larger than 10MB", "less than 1GB"). Never invent size boundaries like `FileSizeBytes < 104857600`.
+8. MULTIPLE EXTENSIONS: When filtering extensions alongside keyword searches, ALWAYS wrap multiple extension ORs in parentheses, e.g.: (Extension = '.jpg' OR Extension = '.png' OR Extension = '.jpeg').
+9. OUTPUT FORMAT: Return ONLY the single raw SQL WHERE condition text. NO extra comments, NO markdown formatting (no ```sql), NO semicolons, NO 'Query:' / 'Output:' tags.
 
 Examples:
+Query: "find minecraft save file"
+Output: (FileName LIKE '%minecraft%' OR FullPath LIKE '%minecraft%') AND (FileName LIKE '%save%' OR FullPath LIKE '%save%')
+
 Query: "find Blade Runner 2049 mkv video files"
-Output: FileName LIKE '%Blade%Runner%' AND Extension = '.mkv'
+Output: (FileName LIKE '%Blade%' OR FullPath LIKE '%Blade%') AND (FileName LIKE '%Runner%' OR FullPath LIKE '%Runner%') AND Extension = '.mkv'
 
 Query: "show me all pdf or word documents"
 Output: Extension = '.pdf' OR Extension = '.docx' OR Extension = '.doc'
 
-Query: "find large zip or rar files"
-Output: (Extension = '.zip' OR Extension = '.rar') AND FileSizeBytes > 10485760
+Query: "find zip files in Downloads folder"
+Output: Extension = '.zip' AND FullPath LIKE '%Downloads%'
 
-Query: "find dark souls knight cathedral wallpaper cover"
-Output: (FileName LIKE '%Dark%Souls%' OR FileName LIKE '%wallpaper%' OR FileName LIKE '%knight%' OR FileName LIKE '%cathedral%') AND (Extension = '.jpg' OR Extension = '.png' OR Extension = '.jpeg' OR Extension = '.webp')
+Query: "find video files larger than 500MB"
+Output: (Extension = '.mp4' OR Extension = '.mkv' OR Extension = '.avi') AND FileSizeBytes > 524288000
 """
 
 def query_files_with_ai(user_prompt, model_name="phi3"):
@@ -72,6 +79,10 @@ def query_files_with_ai(user_prompt, model_name="phi3"):
         where_clause = re.sub(r'```sql|```', '', where_clause, flags=re.IGNORECASE).strip()
         where_clause = re.sub(r'^\s*WHERE\s+', '', where_clause, flags=re.IGNORECASE).strip()
         where_clause = re.split(r'---|\n|Query:|Output:', where_clause, flags=re.IGNORECASE)[0].strip() # Take only the first valid clause line
+
+        # Remove dummy path clauses if present (e.g., /path/to/..., /home/...)
+        where_clause = re.sub(r'\s*AND\s+FullPath\s+LIKE\s+[\'"]%?/(path|home|example)/[^\'"]*[\'"]', '', where_clause, flags=re.IGNORECASE)
+        where_clause = re.sub(r'FullPath\s+LIKE\s+[\'"]%?/(path|home|example)/[^\'"]*[\'"]\s*AND\s*', '', where_clause, flags=re.IGNORECASE)
 
         # Remove trailing semicolons and replace internal semicolons with ' AND '
         where_clause = where_clause.rstrip(';').strip()
