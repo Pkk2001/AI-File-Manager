@@ -1,0 +1,9 @@
+backend/FileManager.Core/files.db
+backend/FileManager.Core/files.db-shm
+backend/FileManager.Core/files.db-wal
+[bB]in/
+[oO]bj/
+__pycache__/
+*.pyc
+.vs/
+.vscode/
