@@ -19,13 +19,15 @@ namespace FileManager.Core
 
             var startTime = DateTime.Now;
 
-            if (args.Length > 0 && !string.IsNullOrWhiteSpace(args[0]))
+            bool analyzeStorage = Array.Exists(args, a => a.Equals("--analyze-storage", StringComparison.OrdinalIgnoreCase));
+            string? targetPath = args.FirstOrDefault(a => !a.StartsWith("--", StringComparison.OrdinalIgnoreCase));
+
+            if (!string.IsNullOrWhiteSpace(targetPath))
             {
-                string targetPath = args[0];
                 Console.WriteLine($"Scanning target folder: {targetPath} ...");
                 scannedFiles = scanner.ScanDirectory(targetPath);
             }
-            else
+            else if (!analyzeStorage)
             {
                 Console.WriteLine("No path argument specified. Fetching all available local drives...");
                 var drives = DriveInfo.GetDrives();
@@ -79,6 +81,50 @@ namespace FileManager.Core
                 if (count >= 5) break;
             }
 
+            // Storage Analysis check option
+            if (analyzeStorage)
+            {
+                Console.WriteLine("\n========================================");
+                Console.WriteLine(" C# Storage Analyzer Service Statistics ");
+                Console.WriteLine("========================================");
+
+                string? driveFilter = null;
+                for (int i = 0; i < args.Length - 1; i++)
+                {
+                    if (args[i].Equals("--drive", StringComparison.OrdinalIgnoreCase))
+                    {
+                        driveFilter = args[i + 1];
+                        break;
+                    }
+                }
+
+                var analyzer = new StorageAnalyzer();
+                
+                Console.WriteLine("\n--- Drive Overviews ---");
+                foreach (var drive in analyzer.GetDriveOverviews())
+                {
+                    Console.WriteLine($"Drive: {drive.DriveName} ({drive.VolumeLabel}) | Format: {drive.DriveFormat} | Type: {drive.DriveType} | Total: {drive.TotalSizeFormatted} | Free: {drive.FreeSizeFormatted} | Used: {drive.UsedSizeFormatted} ({drive.UsedPercentage}%)");
+                }
+
+                Console.WriteLine($"\n--- Category Breakdown {(driveFilter != null ? $"[{driveFilter}]" : "[All Drives]")} ---");
+                foreach (var cat in analyzer.GetCategoryBreakdown(driveFilter))
+                {
+                    Console.WriteLine($"Category: {cat.Category,-18} | Count: {cat.FileCount,8} | Total Size: {cat.TotalSizeFormatted,10} | Share: {cat.PercentageOfTotal,5:F2}%");
+                }
+
+                Console.WriteLine($"\n--- Top 10 Extensions {(driveFilter != null ? $"[{driveFilter}]" : "[All Drives]")} ---");
+                foreach (var ext in analyzer.GetExtensionBreakdown(driveFilter, 10))
+                {
+                    Console.WriteLine($"Extension: {ext.Extension,-12} | Count: {ext.FileCount,8} | Total Size: {ext.TotalSizeFormatted,10}");
+                }
+
+                Console.WriteLine($"\n--- Top 10 Largest Files {(driveFilter != null ? $"[{driveFilter}]" : "[All Drives]")} ---");
+                foreach (var file in analyzer.GetLargestFiles(driveFilter, 10))
+                {
+                    Console.WriteLine($"[{file.FormattedSize,10}] {file.FileName} ({file.Category}) -> {file.FullPath}");
+                }
+            }
+
             // Duplicate check is optional / background so main indexing finishes immediately
             bool checkDuplicates = Array.Exists(args, a => a.Equals("--check-duplicates", StringComparison.OrdinalIgnoreCase));
 
@@ -107,7 +153,8 @@ namespace FileManager.Core
             }
             else
             {
-                Console.WriteLine("Duplicate check skipped for rapid main indexing. (Pass '--check-duplicates' to execute duplicate check).");
+                Console.WriteLine("\nDuplicate check skipped for rapid main indexing. (Pass '--check-duplicates' to execute duplicate check).");
+                Console.WriteLine("Pass '--analyze-storage' to execute storage breakdown analysis.");
             }
         }
     }
