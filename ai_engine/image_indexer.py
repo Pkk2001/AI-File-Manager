@@ -3,6 +3,7 @@ import sqlite3
 import time
 import numpy as np
 from PIL import Image, ImageFile
+from concurrent.futures import ThreadPoolExecutor
 from sentence_transformers import SentenceTransformer
 
 # Allow PIL to load truncated images
@@ -10,7 +11,55 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # Allowed image extensions for semantic search
 IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
-BATCH_SIZE = 32
+
+# Optimization Constants
+BATCH_SIZE = 64
+MIN_FILE_SIZE_BYTES = 25 * 1024  # 25 KB
+MIN_DIMENSION = 128
+RESIZE_TARGET = (224, 224)
+MAX_WORKERS = 8
+
+# Directories/Keywords to skip (case-insensitive)
+EXCLUDED_DIR_KEYWORDS = {
+    'appdata',
+    'windows',
+    'program files',
+    'program files (x86)',
+    '$recycle.bin',
+    'node_modules',
+    '.git',
+    '.cache',
+    'steam',
+    'onlinefix',
+    'goldberg',
+    'thumbnails',
+    'temp',
+    'tmp',
+}
+
+# User data keywords for priority sorting
+USER_PRIORITY_KEYWORDS = [
+    'desktop',
+    'downloads',
+    'pictures',
+    'documents',
+    'photos',
+    'media',
+    'dcim',
+]
+
+
+def is_ignored_path(path: str) -> bool:
+    path_lower = path.lower().replace('/', '\\')
+    return any(kw in path_lower for kw in EXCLUDED_DIR_KEYWORDS)
+
+
+def priority_score(item: tuple) -> int:
+    path_lower = item[0].lower()
+    for idx, kw in enumerate(USER_PRIORITY_KEYWORDS):
+        if kw in path_lower:
+            return idx
+    return 999
 
 
 def get_db_path():
@@ -81,6 +130,22 @@ def fetch_image_records(conn):
     return cursor.fetchall()
 
 
+def load_and_preprocess_image(item):
+    full_path, mtime = item
+    try:
+        if os.path.getsize(full_path) < MIN_FILE_SIZE_BYTES:
+            return None
+
+        with Image.open(full_path) as img:
+            if img.width < MIN_DIMENSION or img.height < MIN_DIMENSION:
+                return None
+            img_rgb = img.convert("RGB")
+            resized = img_rgb.resize(RESIZE_TARGET, Image.Resampling.BICUBIC)
+            return (resized, full_path, mtime)
+    except Exception:
+        return None
+
+
 def index_images(db_path=None, model_name="clip-ViT-B-32", batch_size=BATCH_SIZE):
     if db_path is None:
         db_path = get_db_path()
@@ -97,10 +162,16 @@ def index_images(db_path=None, model_name="clip-ViT-B-32", batch_size=BATCH_SIZE
 
     print(f"Found {len(image_records)} image records in database.", flush=True)
 
-    # Filter for pending/modified images that exist on disk
+    # Filter out system/cache directories, non-existent files, and already indexed files
     pending_items = []
+    skipped_system_count = 0
+
     for full_path, _ in image_records:
         if not full_path or not os.path.isfile(full_path):
+            continue
+
+        if is_ignored_path(full_path):
+            skipped_system_count += 1
             continue
 
         try:
@@ -114,72 +185,81 @@ def index_images(db_path=None, model_name="clip-ViT-B-32", batch_size=BATCH_SIZE
 
         pending_items.append((full_path, mtime))
 
+    print(f"Skipped {skipped_system_count} system/cache/game directory images.", flush=True)
+
+    # Prioritize user data paths (e.g. Desktop, Downloads, Pictures, etc.)
+    pending_items.sort(key=priority_score)
+
     total_pending = len(pending_items)
     if total_pending == 0:
-        print("All image files are already indexed and up-to-date!", flush=True)
+        print("All candidate image files are already indexed and up-to-date!", flush=True)
         conn.close()
         return 0
 
-    print(f"Found {total_pending} images pending indexing/update.", flush=True)
+    print(f"Found {total_pending} candidate user images pending indexing/update.", flush=True)
     print(f"Loading '{model_name}' vision model...", flush=True)
     model = SentenceTransformer(model_name)
 
     start_time = time.time()
     indexed_count = 0
+    processed_candidates = 0
 
-    for i in range(0, total_pending, batch_size):
-        batch = pending_items[i : i + batch_size]
-        valid_images = []
-        valid_metadata = []
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        for i in range(0, total_pending, batch_size):
+            batch = pending_items[i : i + batch_size]
+            processed_candidates += len(batch)
 
-        for full_path, mtime in batch:
-            try:
-                img = Image.open(full_path)
-                img = img.convert("RGB")
-                valid_images.append(img)
-                valid_metadata.append((full_path, mtime))
-            except Exception as e:
-                print(f"Warning: Failed to open image {full_path}: {e}", flush=True)
+            # Preprocess images concurrently across threads
+            results = list(executor.map(load_and_preprocess_image, batch))
+            valid_items = [r for r in results if r is not None]
 
-        if valid_images:
-            try:
-                embeddings = model.encode(
-                    valid_images, normalize_embeddings=True, convert_to_numpy=True
-                )
-                
-                rows_to_insert = []
-                for idx, (full_path, mtime) in enumerate(valid_metadata):
-                    vec = embeddings[idx].astype(np.float32)
-                    blob_data = vec.tobytes()
-                    rows_to_insert.append((full_path, mtime, blob_data))
+            if valid_items:
+                valid_images = [r[0] for r in valid_items]
+                valid_metadata = [(r[1], r[2]) for r in valid_items]
 
-                conn.execute("BEGIN TRANSACTION")
-                conn.executemany(
-                    """
-                    INSERT INTO image_embeddings (file_path, last_modified, embedding)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(file_path) DO UPDATE SET
-                        last_modified = excluded.last_modified,
-                        embedding = excluded.embedding
-                    """,
-                    rows_to_insert,
-                )
-                conn.commit()
+                try:
+                    embeddings = model.encode(
+                        valid_images,
+                        batch_size=batch_size,
+                        normalize_embeddings=True,
+                        convert_to_numpy=True
+                    )
+                    
+                    rows_to_insert = []
+                    for idx, (full_path, mtime) in enumerate(valid_metadata):
+                        vec = embeddings[idx].astype(np.float32)
+                        blob_data = vec.tobytes()
+                        rows_to_insert.append((full_path, mtime, blob_data))
 
-                indexed_count += len(rows_to_insert)
+                    conn.execute("BEGIN TRANSACTION")
+                    conn.executemany(
+                        """
+                        INSERT INTO image_embeddings (file_path, last_modified, embedding)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(file_path) DO UPDATE SET
+                            last_modified = excluded.last_modified,
+                            embedding = excluded.embedding
+                        """,
+                        rows_to_insert,
+                    )
+                    conn.commit()
 
-            except Exception as e:
-                conn.rollback()
-                print(f"Error encoding batch starting at index {i}: {e}", flush=True)
+                    indexed_count += len(rows_to_insert)
 
-        print(f"[Indexed {min(i + batch_size, total_pending)}/{total_pending} images...]", flush=True)
+                except Exception as e:
+                    conn.rollback()
+                    print(f"Error encoding batch starting at index {i}: {e}", flush=True)
+
+            print(
+                f"[Processed {processed_candidates}/{total_pending} candidates | Indexed {indexed_count} valid images...]",
+                flush=True
+            )
 
     elapsed = time.time() - start_time
     print(
         f"\n[SUCCESS] Successfully indexed {indexed_count} images in {elapsed:.2f} seconds!",
         flush=True
     )
-
 
     conn.close()
     return indexed_count
