@@ -3,23 +3,36 @@ const path = require('path');
 const fs = require('fs');
 const { execFile, spawn } = require('child_process');
 
-// Explicit Path Resolution
-const projectRoot = path.resolve(__dirname, '..', '..');
-const pythonScript = path.join(projectRoot, 'ai_engine', 'ipc_backend.py');
-const imageSearchScript = path.join(projectRoot, 'ai_engine', 'image_search.py');
+// Dynamic Path Resolution based on app.isPackaged
+const isPackaged = app.isPackaged;
+const basePath = isPackaged 
+  ? process.resourcesPath 
+  : path.resolve(__dirname, '..', '..');
 
-// Explicit Python venv binary resolution
-const venvPython = path.resolve(projectRoot, 'ai_engine', 'venv', 'Scripts', 'python.exe');
-const pythonBin = fs.existsSync(venvPython) ? venvPython : 'python';
+const pythonBin = isPackaged
+  ? path.join(basePath, 'ai_engine', 'venv', 'Scripts', 'python.exe')
+  : (fs.existsSync(path.resolve(__dirname, '../../ai_engine/venv/Scripts/python.exe'))
+      ? path.resolve(__dirname, '../../ai_engine/venv/Scripts/python.exe')
+      : 'python');
 
-// Explicit Database path resolution
-const coreDbPath = path.resolve(projectRoot, 'backend', 'FileManager.Core', 'files.db');
-const rootDbPath = path.resolve(projectRoot, 'files.db');
-const resolvedDbPath = fs.existsSync(coreDbPath) ? coreDbPath : rootDbPath;
+const aiEngineDir = isPackaged
+  ? path.join(basePath, 'ai_engine')
+  : path.resolve(__dirname, '../../ai_engine');
+
+const pythonScript = path.join(aiEngineDir, 'ipc_backend.py');
+const imageSearchScript = path.join(aiEngineDir, 'image_search.py');
+
+const resolvedDbPath = isPackaged
+  ? path.join(basePath, 'files.db')
+  : (fs.existsSync(path.resolve(__dirname, '../../backend/FileManager.Core/files.db'))
+      ? path.resolve(__dirname, '../../backend/FileManager.Core/files.db')
+      : path.resolve(__dirname, '../../files.db'));
 
 console.log(`[INIT] Electron Backend Configuration:`);
-console.log(` - Project Root: ${projectRoot}`);
+console.log(` - Is Packaged: ${isPackaged}`);
+console.log(` - Base Path: ${basePath}`);
 console.log(` - Python Binary: ${pythonBin}`);
+console.log(` - AI Engine Dir: ${aiEngineDir}`);
 console.log(` - IPC Backend Script: ${pythonScript}`);
 console.log(` - Image Search Script: ${imageSearchScript}`);
 console.log(` - Database Path: ${resolvedDbPath}`);
@@ -33,7 +46,7 @@ function runPythonBackend(action, args = []) {
     const cmdArgs = [pythonScript, action, '--db_path', resolvedDbPath, ...args];
     console.log(`[IPC EXEC] ${pythonBin} ${cmdArgs.join(' ')}`);
 
-    execFile(pythonBin, cmdArgs, { cwd: projectRoot, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+    execFile(pythonBin, cmdArgs, { cwd: aiEngineDir, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (stderr && stderr.trim()) {
         console.error(`[PYTHON STDERR ${action}]: ${stderr.trim()}`);
       }
@@ -61,6 +74,7 @@ function createWindow() {
     height: 850,
     minWidth: 1200,
     minHeight: 800,
+    icon: path.join(__dirname, '../build/icon.ico'),
     titleBarStyle: 'hiddenInset',
     titleBarOverlay: {
       color: '#1f493d',
@@ -114,7 +128,7 @@ ipcMain.handle('search-files', async (event, { query, mode, drive }) => {
     console.log(`[CLIP EXEC] ${pythonBin} ${cmdArgs.join(' ')}`);
 
     return new Promise((resolve) => {
-      const child = execFile(pythonBin, cmdArgs, { cwd: projectRoot, maxBuffer: 50 * 1024 * 1024, timeout: 30000 }, (error, stdout, stderr) => {
+      const child = execFile(pythonBin, cmdArgs, { cwd: aiEngineDir, maxBuffer: 50 * 1024 * 1024, timeout: 30000 }, (error, stdout, stderr) => {
         if (activeImageSearchProcess === child) {
           activeImageSearchProcess = null;
         }
@@ -180,10 +194,10 @@ ipcMain.handle('get-stats', async () => {
 ipcMain.handle('scan-drive', (event, { drive }) => {
   return new Promise((resolve) => {
     const targetDrive = drive || 'C:';
-    const scannerPath = path.resolve(projectRoot, 'backend', 'FileManager.Core', 'bin', 'Debug', 'net9.0', 'FileManager.Core.exe');
+    const scannerPath = path.resolve(basePath, 'backend', 'FileManager.Core', 'bin', 'Debug', 'net9.0', 'FileManager.Core.exe');
 
     let cmd = 'dotnet';
-    let args = ['run', '--project', path.resolve(projectRoot, 'backend', 'FileManager.Core'), '--', '--scan', targetDrive];
+    let args = ['run', '--project', path.resolve(basePath, 'backend', 'FileManager.Core'), '--', '--scan', targetDrive];
 
     if (fs.existsSync(scannerPath)) {
       cmd = scannerPath;
@@ -192,7 +206,7 @@ ipcMain.handle('scan-drive', (event, { drive }) => {
 
     console.log(`[SCAN START] ${cmd} ${args.join(' ')}`);
 
-    const child = spawn(cmd, args, { cwd: projectRoot });
+    const child = spawn(cmd, args, { cwd: basePath });
     activeScanProcess = child;
 
     child.stdout.on('data', (data) => {

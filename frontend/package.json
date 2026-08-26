@@ -1,7 +1,9 @@
 {
-  "name": "frontend",
+  "name": "four-of-all",
+  "productName": "4 OF ALL",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "4-in-1 AI-Powered High Performance File Manager & Storage Analyzer",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
@@ -10,6 +12,46 @@
     "preview": "vite preview",
     "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "electron:build": "npm run build && electron-builder"
+  },
+  "build": {
+    "appId": "com.fourofall.desktop",
+    "productName": "4 OF ALL",
+    "artifactName": "4-OF-ALL-Setup-${version}.${ext}",
+    "extraResources": [
+      {
+        "from": "../ai_engine",
+        "to": "ai_engine",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**"
+        ]
+      },
+      {
+        "from": "../backend/FileManager.Core/files.db",
+        "to": "files.db"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "4 OF ALL",
+      "uninstallDisplayName": "4 OF ALL"
+    },
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "build/**/*"
+    ]
   },
   "devDependencies": {
     "@types/node": "^26.3.0",
